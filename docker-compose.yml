@@ -1,0 +1,85 @@
+version: '3'
+services:
+  node0:
+    build: .
+    command: --port=8080 --peers=node1:8081,node2:8082,node3:8083,node4:8084,node5:8085,node6:8086,node7:8087,node8:8088,node9:8089
+    ports:
+      - "8080:8080"
+      - "9080:9080"
+    networks:
+      - sovnet
+  node1:
+    build: .
+    command: --port=8081 --peers=node0:8080,node2:8082,node3:8083,node4:8084,node5:8085,node6:8086,node7:8087,node8:8088,node9:8089
+    ports:
+      - "8081:8081"
+      - "9081:9081"
+    networks:
+      - sovnet
+  node2:
+    build: .
+    command: --port=8082 --peers=node0:8080,node1:8081,node3:8083,node4:8084,node5:8085,node6:8086,node7:8087,node8:8088,node9:8089
+    ports:
+      - "8082:8082"
+      - "9082:9082"
+    networks:
+      - sovnet
+  node3:
+    build: .
+    command: --port=8083 --peers=node0:8080,node1:8081,node2:8082,node4:8084,node5:8085,node6:8086,node7:8087,node8:8088,node9:8089
+    ports:
+      - "8083:8083"
+      - "9083:9083"
+    networks:
+      - sovnet
+  node4:
+    build: .
+    command: --port=8084 --peers=node0:8080,node1:8081,node2:8082,node3:8083,node5:8085,node6:8086,node7:8087,node8:8088,node9:8089
+    ports:
+      - "8084:8084"
+      - "9084:9084"
+    networks:
+      - sovnet
+  node5:
+    build: .
+    command: --port=8085 --peers=node0:8080,node1:8081,node2:8082,node3:8083,node4:8084,node6:8086,node7:8087,node8:8088,node9:8089
+    ports:
+      - "8085:8085"
+      - "9085:9085"
+    networks:
+      - sovnet
+  node6:
+    build: .
+    command: --port=8086 --peers=node0:8080,node1:8081,node2:8082,node3:8083,node4:8084,node5:8085,node7:8087,node8:8088,node9:8089
+    ports:
+      - "8086:8086"
+      - "9086:9086"
+    networks:
+      - sovnet
+  node7:
+    build: .
+    command: --port=8087 --peers=node0:8080,node1:8081,node2:8082,node3:8083,node4:8084,node5:8085,node6:8086,node8:8088,node9:8089
+    ports:
+      - "8087:8087"
+      - "9087:9087"
+    networks:
+      - sovnet
+  node8:
+    build: .
+    command: --port=8088 --peers=node0:8080,node1:8081,node2:8082,node3:8083,node4:8084,node5:8085,node6:8086,node7:8087,node9:8089
+    ports:
+      - "8088:8088"
+      - "9088:9088"
+    networks:
+      - sovnet
+  node9:
+    build: .
+    command: --port=8089 --peers=node0:8080,node1:8081,node2:8082,node3:8083,node4:8084,node5:8085,node6:8086,node7:8087,node8:8088
+    ports:
+      - "8089:8089"
+      - "9089:9089"
+    networks:
+      - sovnet
+networks:
+  sovnet:
+    driver: bridge
