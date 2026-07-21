@@ -2,7 +2,7 @@
 cd /workspaces/10-Node-Decent-System-
 
 BASE_PORT=8080
-NODES=10
+NODES=100
 
 PEERS=""
 for (( i=0; i<NODES; i++ )); do
