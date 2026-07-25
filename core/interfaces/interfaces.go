@@ -1,0 +1,20 @@
+package interfaces
+
+import "context"
+
+type Storage interface {
+	Put(key, value []byte) error
+	Get(key []byte) ([]byte, error)
+	Delete(key []byte) error
+	Close() error
+}
+
+type StateMachine interface {
+	Apply(blockData []byte) ([]byte, error)
+	GetStateRoot() []byte
+}
+
+type Consensus interface {
+	Propose(ctx context.Context, data []byte) error
+	Commit() <-chan []byte
+}

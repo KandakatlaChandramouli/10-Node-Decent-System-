@@ -1,1 +1,16 @@
-swarm.log
+# Binaries
+sovereign
+sovereignd
+
+# Runtime data & metrics
+*.json
+*.log
+*.dat
+*.png
+
+# IDE / OS junk
+.DS_Store
+
+# Local database & data dumps
+data/
+test_data_pebble/

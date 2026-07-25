@@ -1,0 +1,16 @@
+node:
+  id: "node-1"
+  port: 8080
+
+consensus:
+  algorithm: "pow"
+  difficulty: 4
+
+storage:
+  backend: "pebble"
+  path: "./data/pebble"
+
+p2p:
+  peers:
+    - "127.0.0.1:8081"
+    - "127.0.0.1:8082"
