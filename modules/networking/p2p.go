@@ -36,6 +36,10 @@ func (p *P2PNode) Name() string {
 	return "Networking-P2P"
 }
 
+func (p *P2PNode) Dependencies() []string {
+	return []string{"Storage-Backend"}
+}
+
 func (p *P2PNode) Init(ctx context.Context) error {
 	return nil
 }
@@ -136,4 +140,4 @@ func (p *P2PNode) GetBlockChan() <-chan types.Block {
 	return p.blockChan
 }
 
-var _ interfaces.Service = (*P2PNode)(nil)
+var _ interfaces.DependentService = (*P2PNode)(nil)

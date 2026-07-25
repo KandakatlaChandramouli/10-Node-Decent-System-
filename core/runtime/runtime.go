@@ -18,7 +18,7 @@ type Runtime struct {
 	cfg          *types.Config
 	storage      interfaces.Storage
 	consensus    *consensus.PoWConsensus
-	stateMachine *sovereignchain.ChainState
+	stateMachine interfaces.StateMachine
 	p2p          *networking.P2PNode
 	services     []interfaces.Service
 	cancel       context.CancelFunc
@@ -69,13 +69,19 @@ func (r *Runtime) Start() error {
 	r.cancel = cancel
 
 	for _, svc := range r.services {
+		if depSvc, ok := svc.(interfaces.DependentService); ok {
+			for _, dep := range depSvc.Dependencies() {
+				types.Log("INFO", "runtime", fmt.Sprintf("Service [%s] resolved dependency: %s", svc.Name(), dep), r.cfg.Node.ID)
+			}
+		}
+
 		if err := svc.Init(ctx); err != nil {
 			return fmt.Errorf("service %s init failed: %w", svc.Name(), err)
 		}
 		if err := svc.Start(ctx); err != nil {
 			return fmt.Errorf("service %s start failed: %w", svc.Name(), err)
 		}
-		types.Log("INFO", "runtime", fmt.Sprintf("Started managed service: %s", svc.Name()), r.cfg.Node.ID)
+		types.Log("INFO", "runtime", fmt.Sprintf("Started service: %s", svc.Name()), r.cfg.Node.ID)
 	}
 
 	go r.eventLoop(ctx)
@@ -99,8 +105,8 @@ func (r *Runtime) eventLoop(ctx context.Context) {
 			pendingTxs = append(pendingTxs, tx)
 		case remoteBlock := <-r.p2p.GetBlockChan():
 			data, _ := json.Marshal(remoteBlock)
-			r.stateMachine.Apply(data)
-			types.Log("INFO", "consensus", fmt.Sprintf("Applied remote block #%d: %s", remoteBlock.Index, remoteBlock.Hash), r.cfg.Node.ID)
+			root, _ := r.stateMachine.Apply(data)
+			types.Log("INFO", "consensus", fmt.Sprintf("Applied remote block #%d. State Root: %s", remoteBlock.Index, string(root)), r.cfg.Node.ID)
 		case <-ticker.C:
 			if len(pendingTxs) == 0 {
 				continue
@@ -113,10 +119,10 @@ func (r *Runtime) eventLoop(ctx context.Context) {
 			}
 			if err := r.consensus.MineBlock(ctx, &block); err == nil {
 				data, _ := json.Marshal(block)
-				r.stateMachine.Apply(data)
+				root, _ := r.stateMachine.Apply(data)
 				r.p2p.BroadcastBlock(block)
 				types.BlocksMinedTotal.Inc()
-				types.Log("INFO", "consensus", fmt.Sprintf("Mined block #%d: %s", block.Index, block.Hash), r.cfg.Node.ID)
+				types.Log("INFO", "consensus", fmt.Sprintf("Mined block #%d: %s. New State Root: %s", block.Index, block.Hash, string(root)), r.cfg.Node.ID)
 				pendingTxs = nil
 			} else {
 				types.BlocksFailedTotal.Inc()

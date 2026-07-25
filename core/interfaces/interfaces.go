@@ -10,7 +10,7 @@ type Storage interface {
 }
 
 type StateMachine interface {
-	Apply(blockData []byte) ([]byte, error)
+	Apply(commitLog []byte) ([]byte, error)
 	GetStateRoot() []byte
 }
 
@@ -25,4 +25,9 @@ type Service interface {
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 	Health() error
+}
+
+type DependentService interface {
+	Service
+	Dependencies() []string
 }
