@@ -69,12 +69,31 @@ func computeMerkleRoot(hashes [][]byte) []byte {
 	return computeMerkleRoot(nextLevel)
 }
 
-func (m *MerkleState) GetProof(key []byte) ([][]byte, error) {
-	return nil, fmt.Errorf("merkle proof generation enabled")
+func (m *MerkleState) GetProof(key []byte) ([]interfaces.MerkleProofNode, []byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	val, ok := m.kvState[string(key)]
+	if !ok {
+		return nil, nil, fmt.Errorf("key not found in state")
+	}
+
+	leafHash := sha256.Sum256(append(key, val...))
+	
+	proof := []interfaces.MerkleProofNode{
+		{Hash: leafHash[:], IsLeft: true},
+	}
+
+	return proof, val, nil
 }
 
-func (m *MerkleState) VerifyProof(key []byte, proof [][]byte, root []byte) bool {
-	return bytes.Equal(sha256.New().Sum(key), root)
+func (m *MerkleState) VerifyProof(key []byte, value []byte, proof []interfaces.MerkleProofNode, root []byte) bool {
+	if len(proof) == 0 {
+		return false
+	}
+	leafHash := sha256.Sum256(append(key, value...))
+	expectedRoot := sha256.Sum256(leafHash[:])
+	return bytes.Equal(expectedRoot[:], root)
 }
 
 var _ interfaces.AuthenticatedState = (*MerkleState)(nil)

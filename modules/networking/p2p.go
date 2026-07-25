@@ -1,15 +1,16 @@
 package networking
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/libp2p/go-libp2p"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/host"
 	"sovereign-chain/core/interfaces"
 	"sovereign-chain/core/types"
 )
@@ -18,6 +19,10 @@ type P2PNode struct {
 	mu        sync.RWMutex
 	port      int
 	peers     []string
+	host      host.Host
+	pubsub    *pubsub.PubSub
+	topic     *pubsub.Topic
+	sub       *pubsub.Subscription
 	server    *http.Server
 	blockChan chan types.Block
 	txChan    chan types.Transaction
@@ -33,7 +38,7 @@ func NewP2PNode(port int, peers []string) *P2PNode {
 }
 
 func (p *P2PNode) Name() string {
-	return "Networking-P2P"
+	return "Networking-LibP2P"
 }
 
 func (p *P2PNode) Dependencies() []string {
@@ -41,7 +46,51 @@ func (p *P2PNode) Dependencies() []string {
 }
 
 func (p *P2PNode) Init(ctx context.Context) error {
+	h, err := libp2p.New(
+		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", p.port+1000)),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create libp2p host: %w", err)
+	}
+	p.host = h
+
+	ps, err := pubsub.NewGossipSub(ctx, p.host)
+	if err != nil {
+		return fmt.Errorf("failed to create GossipSub: %w", err)
+	}
+	p.pubsub = ps
+
+	topic, err := ps.Join("sovereign-blocks")
+	if err != nil {
+		return fmt.Errorf("failed to join gossip topic: %w", err)
+	}
+	p.topic = topic
+
+	sub, err := topic.Subscribe()
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to topic: %w", err)
+	}
+	p.sub = sub
+
+	go p.listenGossip(ctx)
+
 	return nil
+}
+
+func (p *P2PNode) listenGossip(ctx context.Context) {
+	for {
+		msg, err := p.sub.Next(ctx)
+		if err != nil {
+			return
+		}
+		if msg.ReceivedFrom == p.host.ID() {
+			continue
+		}
+		var block types.Block
+		if err := json.Unmarshal(msg.Data, &block); err == nil {
+			p.blockChan <- block
+		}
+	}
 }
 
 func (p *P2PNode) Start(ctx context.Context) error {
@@ -51,7 +100,7 @@ func (p *P2PNode) Start(ctx context.Context) error {
 	mux.HandleFunc("/block", p.handleBlock)
 	mux.Handle("/metrics", types.PrometheusHandler())
 	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "pong")
+		fmt.Fprintf(w, "pong [peer_id: %s]", p.host.ID().String())
 	})
 
 	p.server = &http.Server{
@@ -66,15 +115,21 @@ func (p *P2PNode) Start(ctx context.Context) error {
 
 	go func() {
 		if err := p.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			types.Log("ERROR", "networking", fmt.Sprintf("P2P server error: %v", err), "")
+			types.Log("ERROR", "networking", fmt.Sprintf("HTTP server error: %v", err), "")
 		}
 	}()
 
-	types.Log("INFO", "networking", fmt.Sprintf("P2P listening on port %d with %d seed peers", p.port, len(p.peers)), "")
+	types.Log("INFO", "networking", fmt.Sprintf("LibP2P host online [ID: %s | Port: %d]", p.host.ID().String(), p.port), "")
 	return nil
 }
 
 func (p *P2PNode) Stop(ctx context.Context) error {
+	if p.sub != nil {
+		p.sub.Cancel()
+	}
+	if p.host != nil {
+		_ = p.host.Close()
+	}
 	if p.server != nil {
 		return p.server.Shutdown(ctx)
 	}
@@ -82,6 +137,9 @@ func (p *P2PNode) Stop(ctx context.Context) error {
 }
 
 func (p *P2PNode) Health() error {
+	if p.host == nil || len(p.host.Addrs()) == 0 {
+		return fmt.Errorf("libp2p host unhealthy")
+	}
 	return nil
 }
 
@@ -90,9 +148,8 @@ func (p *P2PNode) handleTx(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	body, _ := io.ReadAll(r.Body)
 	var tx types.Transaction
-	if err := json.Unmarshal(body, &tx); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&tx); err != nil {
 		http.Error(w, "Invalid transaction payload", http.StatusBadRequest)
 		return
 	}
@@ -106,9 +163,8 @@ func (p *P2PNode) handleBlock(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	body, _ := io.ReadAll(r.Body)
 	var block types.Block
-	if err := json.Unmarshal(body, &block); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&block); err != nil {
 		http.Error(w, "Invalid block payload", http.StatusBadRequest)
 		return
 	}
@@ -117,19 +173,14 @@ func (p *P2PNode) handleBlock(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *P2PNode) BroadcastBlock(block types.Block) {
-	data, _ := json.Marshal(block)
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	client := http.Client{Timeout: 2 * time.Second}
-	for _, peer := range p.peers {
-		go func(peer string) {
-			resp, err := client.Post(fmt.Sprintf("http://%s/block", peer), "application/json", bytes.NewBuffer(data))
-			if err == nil {
-				resp.Body.Close()
-			}
-		}(peer)
+	data, err := json.Marshal(block)
+	if err != nil {
+		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_ = p.topic.Publish(ctx, data)
 }
 
 func (p *P2PNode) GetTxChan() <-chan types.Transaction {
