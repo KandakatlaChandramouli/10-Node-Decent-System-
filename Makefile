@@ -1,4 +1,4 @@
-.PHONY: all build test verify experiments plots clean
+.PHONY: all build test verify experiments plots docker-build docker-up docker-down clean
 
 all: verify
 
@@ -19,6 +19,15 @@ plots:
 
 paper-artifacts: experiments plots
 	@echo "Research artifacts generated successfully in results/"
+
+docker-build:
+	docker compose build
+
+docker-up:
+	docker compose up -d
+
+docker-down:
+	docker compose down
 
 clean:
 	rm -rf bin/ results/json/* results/plots/*
