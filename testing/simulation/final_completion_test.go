@@ -46,13 +46,8 @@ func TestDynamicRaftMembershipAndReadIndex(t *testing.T) {
 	_ = raftNode.Start(ctx)
 	defer func() { _ = raftNode.Stop(ctx) }()
 
-	// Simulate election grant to set node1 as leader for test
-	raftNode.HandleRequestVote(consensus.RequestVoteArgs{
-		Term:         1,
-		CandidateID:  "node1",
-		LastLogIndex: 0,
-		LastLogTerm:  0,
-	})
+	// Explicitly establish Leader role for deterministic membership proposal test
+	raftNode.SetRole(consensus.RoleLeader)
 
 	err := raftNode.ProposeMembershipChange(consensus.MembershipChange{
 		Type:   consensus.AddNode,

@@ -72,3 +72,9 @@ func (re *RaftEngine) GetReadIndex() ReadIndexResponse {
 		Success:   true,
 	}
 }
+
+func (re *RaftEngine) SetRole(role NodeRole) {
+	re.mu.Lock()
+	defer re.mu.Unlock()
+	re.role = role
+}
