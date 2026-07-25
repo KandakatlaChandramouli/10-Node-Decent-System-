@@ -53,7 +53,7 @@ func TestDistributedLockService(t *testing.T) {
 		TTLMs:    5000,
 	})
 
-	root1, err := lockApp.Apply(acqPayload)
+	_, err = lockApp.Apply(acqPayload)
 	if err != nil {
 		t.Fatalf("Failed to acquire lock: %v", err)
 	}
