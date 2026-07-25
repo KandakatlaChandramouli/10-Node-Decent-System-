@@ -2,7 +2,6 @@ package consensus
 
 import (
 	"fmt"
-	"sync"
 )
 
 type MembershipChangeType string
@@ -18,9 +17,9 @@ type MembershipChange struct {
 }
 
 type ReadIndexResponse struct {
-	ReadIndex int   `json:"read_index"`
-	Term      int   `json:"term"`
-	Success   bool  `json:"success"`
+	ReadIndex int  `json:"read_index"`
+	Term      int  `json:"term"`
+	Success   bool `json:"success"`
 }
 
 func (re *RaftEngine) ProposeMembershipChange(change MembershipChange) error {

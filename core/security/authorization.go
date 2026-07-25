@@ -1,7 +1,6 @@
 package security
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
