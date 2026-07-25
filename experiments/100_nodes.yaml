@@ -1,0 +1,12 @@
+version: "1.0"
+experiment:
+  name: "100-node-cluster-simulation"
+  topology: "mesh"
+  total_nodes: 100
+  target_tps: 500
+  consensus: "pow"
+  storage_backend: "pebble"
+  chaos:
+    latency_ms: 25
+    packet_loss_ratio: 0.05
+    partition_nodes: 10
