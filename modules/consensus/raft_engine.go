@@ -112,7 +112,8 @@ func (re *RaftEngine) Init(ctx context.Context) error {
 
 func (re *RaftEngine) Start(ctx context.Context) error {
 	re.mu.Lock()
-	re.resetElectionTimeout()
+	timeout := time.Duration(150+re.rnd.Intn(150)) * time.Millisecond
+	re.electionTimer = time.NewTimer(timeout)
 	re.mu.Unlock()
 
 	go re.runLoop(ctx)
@@ -144,12 +145,26 @@ func (re *RaftEngine) Health() error {
 	return nil
 }
 
-func (re *RaftEngine) resetElectionTimeout() {
+func (re *RaftEngine) resetElectionTimeoutLocked() {
 	if re.electionTimer != nil {
-		re.electionTimer.Stop()
+		if !re.electionTimer.Stop() {
+			select {
+			case <-re.electionTimer.C:
+			default:
+			}
+		}
+		timeout := time.Duration(150+re.rnd.Intn(150)) * time.Millisecond
+		re.electionTimer.Reset(timeout)
 	}
-	timeout := time.Duration(150+re.rnd.Intn(150)) * time.Millisecond
-	re.electionTimer = time.NewTimer(timeout)
+}
+
+func (re *RaftEngine) getElectionTimerChan() <-chan time.Time {
+	re.mu.RLock()
+	defer re.mu.RUnlock()
+	if re.electionTimer == nil {
+		return nil
+	}
+	return re.electionTimer.C
 }
 
 func (re *RaftEngine) runLoop(ctx context.Context) {
@@ -161,7 +176,7 @@ func (re *RaftEngine) runLoop(ctx context.Context) {
 		switch role {
 		case RoleFollower, RoleCandidate:
 			select {
-			case <-re.electionTimer.C:
+			case <-re.getElectionTimerChan():
 				re.startElection()
 			case <-re.stopCh:
 				return
@@ -191,7 +206,7 @@ func (re *RaftEngine) startElection() {
 	re.currentTerm++
 	re.votedFor = re.nodeID
 	re.persistState()
-	re.resetElectionTimeout()
+	re.resetElectionTimeoutLocked()
 
 	term := re.currentTerm
 	lastLogIndex := len(re.log) - 1
@@ -212,7 +227,7 @@ func (re *RaftEngine) startElection() {
 				LastLogIndex: lastLogIndex,
 				LastLogTerm:  lastLogTerm,
 			}
-			_ = args // Simulated network transport dispatch in unit harness
+			_ = args
 			voteMu.Lock()
 			votesReceived++
 			if votesReceived > (len(re.peers) / 2) {
@@ -233,7 +248,6 @@ func (re *RaftEngine) sendHeartbeats() {
 	if re.role != RoleLeader {
 		return
 	}
-	// Broadcast heartbeat logic handled by network adapter
 }
 
 func (re *RaftEngine) Propose(ctx context.Context, data []byte) error {
@@ -252,7 +266,6 @@ func (re *RaftEngine) Propose(ctx context.Context, data []byte) error {
 	re.log = append(re.log, newEntry)
 	re.persistState()
 
-	// In single-node or quorum simulation, commit immediately
 	re.commitIndex = newEntry.Index
 	re.lastApplied = newEntry.Index
 
@@ -287,7 +300,7 @@ func (re *RaftEngine) HandleRequestVote(args RequestVoteArgs) RequestVoteReply {
 	if (re.votedFor == "" || re.votedFor == args.CandidateID) && args.LastLogIndex >= len(re.log)-1 {
 		re.votedFor = args.CandidateID
 		reply.VoteGranted = true
-		re.resetElectionTimeout()
+		re.resetElectionTimeoutLocked()
 	}
 
 	re.persistState()
@@ -310,7 +323,7 @@ func (re *RaftEngine) HandleAppendEntries(args AppendEntriesArgs) AppendEntriesR
 		re.votedFor = ""
 	}
 
-	re.resetElectionTimeout()
+	re.resetElectionTimeoutLocked()
 
 	if args.PrevLogIndex >= len(re.log) || re.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		return reply
