@@ -46,6 +46,13 @@ func (p *P2PNode) Dependencies() []string {
 }
 
 func (p *P2PNode) Init(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.host != nil {
+		return nil
+	}
+
 	h, err := libp2p.New(
 		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", p.port+1000)),
 	)
@@ -94,13 +101,21 @@ func (p *P2PNode) listenGossip(ctx context.Context) {
 }
 
 func (p *P2PNode) Start(ctx context.Context) error {
+	if err := p.Init(ctx); err != nil {
+		return fmt.Errorf("auto-init failed in Start: %w", err)
+	}
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/tx", p.handleTx)
 	mux.HandleFunc("/block", p.handleBlock)
 	mux.Handle("/metrics", types.PrometheusHandler())
 	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "pong [peer_id: %s]", p.host.ID().String())
+		peerID := "unknown"
+		if p.host != nil {
+			peerID = p.host.ID().String()
+		}
+		fmt.Fprintf(w, "pong [peer_id: %s]", peerID)
 	})
 
 	p.server = &http.Server{
@@ -119,11 +134,19 @@ func (p *P2PNode) Start(ctx context.Context) error {
 		}
 	}()
 
-	types.Log("INFO", "networking", fmt.Sprintf("LibP2P host online [ID: %s | Port: %d]", p.host.ID().String(), p.port), "")
+	peerID := "unknown"
+	if p.host != nil {
+		peerID = p.host.ID().String()
+	}
+
+	types.Log("INFO", "networking", fmt.Sprintf("LibP2P host online [ID: %s | Port: %d]", peerID, p.port), "")
 	return nil
 }
 
 func (p *P2PNode) Stop(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if p.sub != nil {
 		p.sub.Cancel()
 	}
@@ -137,6 +160,9 @@ func (p *P2PNode) Stop(ctx context.Context) error {
 }
 
 func (p *P2PNode) Health() error {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
 	if p.host == nil || len(p.host.Addrs()) == 0 {
 		return fmt.Errorf("libp2p host unhealthy")
 	}
@@ -180,7 +206,9 @@ func (p *P2PNode) BroadcastBlock(block types.Block) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	_ = p.topic.Publish(ctx, data)
+	if p.topic != nil {
+		_ = p.topic.Publish(ctx, data)
+	}
 }
 
 func (p *P2PNode) GetTxChan() <-chan types.Transaction {
