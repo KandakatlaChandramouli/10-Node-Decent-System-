@@ -3,6 +3,7 @@ package simulation
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -25,7 +26,6 @@ func TestRaftLogCompactionAndSnapshotting(t *testing.T) {
 	_ = raftNode.Start(ctx)
 	defer func() { _ = raftNode.Stop(ctx) }()
 
-	// Simulate log replication entries
 	appendArgs := consensus.AppendEntriesArgs{
 		Term:         1,
 		LeaderID:     "node2",
@@ -60,7 +60,7 @@ func TestTransactionalExecutionAndRollback(t *testing.T) {
 		var req map[string]int
 		_ = json.Unmarshal(payload, &req)
 		if req["amount"] > 1000 {
-			return nil, testing.ErrPanic
+			return nil, fmt.Errorf("amount exceeds transfer limit of 1000")
 		}
 		return []byte("transfer_success"), nil
 	})
