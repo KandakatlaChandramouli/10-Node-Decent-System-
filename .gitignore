@@ -14,3 +14,4 @@ sovereignd
 # Local database & data dumps
 data/
 test_data_pebble/
+results/
