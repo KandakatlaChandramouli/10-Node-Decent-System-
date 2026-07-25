@@ -3,6 +3,8 @@ package simulation
 import (
 	"context"
 	"encoding/json"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,26 +28,33 @@ func TestServiceRegistryAndScheduler(t *testing.T) {
 	}
 
 	sched := runtime.NewScheduler()
-	executed := false
-	var mu time.Time
+	var executed atomic.Bool
+	var timeMu sync.Mutex
+	var lastExec time.Time
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
 	sched.ScheduleRecurring(ctx, "health_monitor", 20*time.Millisecond, func(c context.Context) error {
-		executed = true
-		mu = time.Now()
+		executed.Store(true)
+		timeMu.Lock()
+		lastExec = time.Now()
+		timeMu.Unlock()
 		return nil
 	})
 
 	time.Sleep(50 * time.Millisecond)
 	sched.Stop()
 
-	if !executed || mu.IsZero() {
+	timeMu.Lock()
+	execTime := lastExec
+	timeMu.Unlock()
+
+	if !executed.Load() || execTime.IsZero() {
 		t.Fatalf("Scheduler failed to execute recurring task")
 	}
 
-	t.Logf("Runtime Service Registry & Scheduler verified successfully")
+	t.Logf("Runtime Service Registry & Scheduler verified successfully without race conditions")
 }
 
 func TestDistributedConfigService(t *testing.T) {
