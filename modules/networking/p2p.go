@@ -8,21 +8,19 @@ import (
 	"io"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
+	"sovereign-chain/core/interfaces"
 	"sovereign-chain/core/types"
 )
 
 type P2PNode struct {
-	mu         sync.RWMutex
-	port       int
-	peers      []string
-	server     *http.Server
-	blockChan  chan types.Block
-	txChan     chan types.Transaction
-	txCount    uint64
-	blockCount uint64
+	mu        sync.RWMutex
+	port      int
+	peers     []string
+	server    *http.Server
+	blockChan chan types.Block
+	txChan    chan types.Transaction
 }
 
 func NewP2PNode(port int, peers []string) *P2PNode {
@@ -34,12 +32,20 @@ func NewP2PNode(port int, peers []string) *P2PNode {
 	}
 }
 
+func (p *P2PNode) Name() string {
+	return "Networking-P2P"
+}
+
+func (p *P2PNode) Init(ctx context.Context) error {
+	return nil
+}
+
 func (p *P2PNode) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/tx", p.handleTx)
 	mux.HandleFunc("/block", p.handleBlock)
-	mux.HandleFunc("/metrics", types.PrometheusHandler)
+	mux.Handle("/metrics", types.PrometheusHandler())
 	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "pong")
 	})
@@ -64,6 +70,17 @@ func (p *P2PNode) Start(ctx context.Context) error {
 	return nil
 }
 
+func (p *P2PNode) Stop(ctx context.Context) error {
+	if p.server != nil {
+		return p.server.Shutdown(ctx)
+	}
+	return nil
+}
+
+func (p *P2PNode) Health() error {
+	return nil
+}
+
 func (p *P2PNode) handleTx(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -75,7 +92,7 @@ func (p *P2PNode) handleTx(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid transaction payload", http.StatusBadRequest)
 		return
 	}
-	atomic.AddUint64(&types.GlobalMetrics.TxProcessed, 1)
+	types.TxProcessedTotal.Inc()
 	p.txChan <- tx
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -91,7 +108,6 @@ func (p *P2PNode) handleBlock(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid block payload", http.StatusBadRequest)
 		return
 	}
-	atomic.AddUint64(&p.blockCount, 1)
 	p.blockChan <- block
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -119,3 +135,5 @@ func (p *P2PNode) GetTxChan() <-chan types.Transaction {
 func (p *P2PNode) GetBlockChan() <-chan types.Block {
 	return p.blockChan
 }
+
+var _ interfaces.Service = (*P2PNode)(nil)

@@ -20,6 +20,7 @@ type Runtime struct {
 	consensus    *consensus.PoWConsensus
 	stateMachine *sovereignchain.ChainState
 	p2p          *networking.P2PNode
+	services     []interfaces.Service
 	cancel       context.CancelFunc
 }
 
@@ -45,21 +46,36 @@ func New(configPath string) (*Runtime, error) {
 	chainState := sovereignchain.NewChainState(store)
 	p2pNode := networking.NewP2PNode(cfg.Node.Port, cfg.P2P.Peers)
 
-	return &Runtime{
+	rt := &Runtime{
 		cfg:          cfg,
 		storage:      store,
 		consensus:    powEngine,
 		stateMachine: chainState,
 		p2p:          p2pNode,
-	}, nil
+		services:     make([]interfaces.Service, 0),
+	}
+
+	rt.RegisterService(p2pNode)
+
+	return rt, nil
+}
+
+func (r *Runtime) RegisterService(svc interfaces.Service) {
+	r.services = append(r.services, svc)
 }
 
 func (r *Runtime) Start() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel
 
-	if err := r.p2p.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start p2p node: %w", err)
+	for _, svc := range r.services {
+		if err := svc.Init(ctx); err != nil {
+			return fmt.Errorf("service %s init failed: %w", svc.Name(), err)
+		}
+		if err := svc.Start(ctx); err != nil {
+			return fmt.Errorf("service %s start failed: %w", svc.Name(), err)
+		}
+		types.Log("INFO", "runtime", fmt.Sprintf("Started managed service: %s", svc.Name()), r.cfg.Node.ID)
 	}
 
 	go r.eventLoop(ctx)
@@ -99,16 +115,30 @@ func (r *Runtime) eventLoop(ctx context.Context) {
 				data, _ := json.Marshal(block)
 				r.stateMachine.Apply(data)
 				r.p2p.BroadcastBlock(block)
+				types.BlocksMinedTotal.Inc()
 				types.Log("INFO", "consensus", fmt.Sprintf("Mined block #%d: %s", block.Index, block.Hash), r.cfg.Node.ID)
 				pendingTxs = nil
+			} else {
+				types.BlocksFailedTotal.Inc()
 			}
 		}
 	}
 }
 
 func (r *Runtime) Stop() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	if r.cancel != nil {
 		r.cancel()
 	}
+
+	for i := len(r.services) - 1; i >= 0; i-- {
+		svc := r.services[i]
+		if err := svc.Stop(ctx); err != nil {
+			types.Log("ERROR", "runtime", fmt.Sprintf("Failed stopping service %s: %v", svc.Name(), err), r.cfg.Node.ID)
+		}
+	}
+
 	return r.storage.Close()
 }

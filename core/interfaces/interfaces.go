@@ -18,3 +18,11 @@ type Consensus interface {
 	Propose(ctx context.Context, data []byte) error
 	Commit() <-chan []byte
 }
+
+type Service interface {
+	Name() string
+	Init(ctx context.Context) error
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+	Health() error
+}
