@@ -92,8 +92,7 @@ func (m *MerkleState) VerifyProof(key []byte, value []byte, proof []interfaces.M
 		return false
 	}
 	leafHash := sha256.Sum256(append(key, value...))
-	expectedRoot := sha256.Sum256(leafHash[:])
-	return bytes.Equal(expectedRoot[:], root)
+	return bytes.Equal(leafHash[:], root)
 }
 
 var _ interfaces.AuthenticatedState = (*MerkleState)(nil)
