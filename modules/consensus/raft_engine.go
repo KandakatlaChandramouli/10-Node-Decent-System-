@@ -38,6 +38,12 @@ type LogEntry struct {
 	Data  []byte `json:"data"`
 }
 
+type Snapshot struct {
+	LastIncludedIndex int    `json:"last_included_index"`
+	LastIncludedTerm  int    `json:"last_included_term"`
+	Data              []byte `json:"data"`
+}
+
 type RequestVoteArgs struct {
 	Term         int    `json:"term"`
 	CandidateID  string `json:"candidate_id"`
@@ -71,6 +77,7 @@ type RaftEngine struct {
 	currentTerm int
 	votedFor    string
 	log         []LogEntry
+	snapshot    Snapshot
 	commitIndex int
 	lastApplied int
 	role        NodeRole
@@ -89,7 +96,8 @@ func NewRaftEngine(nodeID string, peers []string, store interfaces.Storage) *Raf
 		peers:       peers,
 		currentTerm: 0,
 		votedFor:    "",
-		log:         []LogEntry{{Index: 0, Term: 0, Data: nil}}, // Sentinel entry
+		log:         []LogEntry{{Index: 0, Term: 0, Data: nil}},
+		snapshot:    Snapshot{LastIncludedIndex: 0, LastIncludedTerm: 0, Data: nil},
 		commitIndex: 0,
 		lastApplied: 0,
 		role:        RoleFollower,
@@ -209,8 +217,8 @@ func (re *RaftEngine) startElection() {
 	re.resetElectionTimeoutLocked()
 
 	term := re.currentTerm
-	lastLogIndex := len(re.log) - 1
-	lastLogTerm := re.log[lastLogIndex].Term
+	lastLogIndex := re.getLastLogIndex()
+	lastLogTerm := re.getLastLogTerm()
 	re.mu.Unlock()
 
 	votesReceived := 1
@@ -258,16 +266,17 @@ func (re *RaftEngine) Propose(ctx context.Context, data []byte) error {
 		return fmt.Errorf("node %s is not leader (current role: %s)", re.nodeID, re.role)
 	}
 
+	newIndex := re.getLastLogIndex() + 1
 	newEntry := LogEntry{
-		Index: len(re.log),
+		Index: newIndex,
 		Term:  re.currentTerm,
 		Data:  data,
 	}
 	re.log = append(re.log, newEntry)
 	re.persistState()
 
-	re.commitIndex = newEntry.Index
-	re.lastApplied = newEntry.Index
+	re.commitIndex = newIndex
+	re.lastApplied = newIndex
 
 	select {
 	case re.commitChan <- data:
@@ -279,6 +288,43 @@ func (re *RaftEngine) Propose(ctx context.Context, data []byte) error {
 
 func (re *RaftEngine) Commit() <-chan []byte {
 	return re.commitChan
+}
+
+func (re *RaftEngine) CompactLog(snapshotIndex int, stateData []byte) error {
+	re.mu.Lock()
+	defer re.mu.Unlock()
+
+	if snapshotIndex <= re.snapshot.LastIncludedIndex || snapshotIndex > re.commitIndex {
+		return fmt.Errorf("invalid snapshot index %d (commitIndex: %d, lastSnapshot: %d)",
+			snapshotIndex, re.commitIndex, re.snapshot.LastIncludedIndex)
+	}
+
+	relativeIndex := snapshotIndex - re.snapshot.LastIncludedIndex
+	snapshotTerm := re.log[relativeIndex].Term
+
+	re.snapshot = Snapshot{
+		LastIncludedIndex: snapshotIndex,
+		LastIncludedTerm:  snapshotTerm,
+		Data:              stateData,
+	}
+
+	re.log = append([]LogEntry{{Index: snapshotIndex, Term: snapshotTerm, Data: nil}}, re.log[relativeIndex+1:]...)
+	re.persistState()
+	return nil
+}
+
+func (re *RaftEngine) getLastLogIndex() int {
+	if len(re.log) == 0 {
+		return re.snapshot.LastIncludedIndex
+	}
+	return re.log[len(re.log)-1].Index
+}
+
+func (re *RaftEngine) getLastLogTerm() int {
+	if len(re.log) == 0 {
+		return re.snapshot.LastIncludedTerm
+	}
+	return re.log[len(re.log)-1].Term
 }
 
 func (re *RaftEngine) HandleRequestVote(args RequestVoteArgs) RequestVoteReply {
@@ -297,7 +343,8 @@ func (re *RaftEngine) HandleRequestVote(args RequestVoteArgs) RequestVoteReply {
 		re.votedFor = ""
 	}
 
-	if (re.votedFor == "" || re.votedFor == args.CandidateID) && args.LastLogIndex >= len(re.log)-1 {
+	lastIndex := re.getLastLogIndex()
+	if (re.votedFor == "" || re.votedFor == args.CandidateID) && args.LastLogIndex >= lastIndex {
 		re.votedFor = args.CandidateID
 		reply.VoteGranted = true
 		re.resetElectionTimeoutLocked()
@@ -325,26 +372,31 @@ func (re *RaftEngine) HandleAppendEntries(args AppendEntriesArgs) AppendEntriesR
 
 	re.resetElectionTimeoutLocked()
 
-	if args.PrevLogIndex >= len(re.log) || re.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+	relativePrevIndex := args.PrevLogIndex - re.snapshot.LastIncludedIndex
+	if relativePrevIndex < 0 || relativePrevIndex >= len(re.log) || re.log[relativePrevIndex].Term != args.PrevLogTerm {
 		return reply
 	}
 
-	re.log = re.log[:args.PrevLogIndex+1]
+	re.log = re.log[:relativePrevIndex+1]
 	re.log = append(re.log, args.Entries...)
 	re.persistState()
 
 	if args.LeaderCommit > re.commitIndex {
 		re.commitIndex = args.LeaderCommit
-		if re.commitIndex > len(re.log)-1 {
-			re.commitIndex = len(re.log) - 1
+		maxIndex := re.getLastLogIndex()
+		if re.commitIndex > maxIndex {
+			re.commitIndex = maxIndex
 		}
 		for re.lastApplied < re.commitIndex {
 			re.lastApplied++
-			entryData := re.log[re.lastApplied].Data
-			if len(entryData) > 0 {
-				select {
-				case re.commitChan <- entryData:
-				default:
+			relAppIndex := re.lastApplied - re.snapshot.LastIncludedIndex
+			if relAppIndex >= 0 && relAppIndex < len(re.log) {
+				entryData := re.log[relAppIndex].Data
+				if len(entryData) > 0 {
+					select {
+					case re.commitChan <- entryData:
+					default:
+					}
 				}
 			}
 		}
@@ -362,6 +414,7 @@ func (re *RaftEngine) persistState() {
 		"currentTerm": re.currentTerm,
 		"votedFor":    re.votedFor,
 		"log":         re.log,
+		"snapshot":    re.snapshot,
 	}
 	data, err := json.Marshal(state)
 	if err == nil {
@@ -381,11 +434,13 @@ func (re *RaftEngine) loadState() {
 		CurrentTerm int        `json:"currentTerm"`
 		VotedFor    string     `json:"votedFor"`
 		Log         []LogEntry `json:"log"`
+		Snapshot    Snapshot   `json:"snapshot"`
 	}
 	if err := json.Unmarshal(data, &state); err == nil {
 		re.currentTerm = state.CurrentTerm
 		re.votedFor = state.VotedFor
 		re.log = state.Log
+		re.snapshot = state.Snapshot
 	}
 }
 
