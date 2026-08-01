@@ -15,3 +15,8 @@ sovereignd
 data/
 test_data_pebble/
 results/
+
+# Ignore compiled binaries
+build/
+sovereign-node
+cmd/sovereign/sovereign-node
