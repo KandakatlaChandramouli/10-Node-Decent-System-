@@ -1,33 +1,16 @@
-.PHONY: all build test verify experiments plots docker-build docker-up docker-down clean
-
-all: verify
+.PHONY: docker-up docker-down build paper-artifacts
 
 build:
-	go build -o bin/sovereign-node ./cmd/server
-
-test:
-	go test -race ./testing/simulation/...
-
-verify:
-	go mod tidy && ./deploy/scripts/verify.sh
-
-experiments:
-	go run ./cmd/experiment/runner.go
-
-plots:
-	python3 ./scripts/generate_plots.py
-
-paper-artifacts: experiments plots
-	@echo "Research artifacts generated successfully in results/"
-
-docker-build:
-	docker compose build
+	go build -o build/sovereign-node ./cmd/sovereign
 
 docker-up:
-	docker compose up -d
+	@echo "Booting 10-Node Sovereign Mesh..."
+	docker-compose up -d --build
 
 docker-down:
-	docker compose down
+	@echo "Tearing down Sovereign Mesh..."
+	docker-compose down
 
-clean:
-	rm -rf bin/ results/json/* results/plots/*
+paper-artifacts:
+	@echo "Generating IEEE publication artifacts..."
+	python3 ./scripts/generate_plots.py
