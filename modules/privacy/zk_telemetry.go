@@ -68,7 +68,7 @@ func (p *TelemetryPipeline) worker(id int) {
 			fmt.Printf("[ZK Worker %d] FAULT: Failed to generate proof for Tx %s: %v\n", id, trace.TxID, err)
 			continue
 		}
-		
+
 		// Store proof in registry for external auditor API queries
 		p.Registry.Store(trace.TxID, proof)
 		// Note: In a full rollup, we would periodically batch these and submit back to Raft.

@@ -31,7 +31,7 @@ func (f *SideChannelFetcher) FetchAndStore(txID string, expectedHash [32]byte) e
 	defer cancel()
 
 	fmt.Printf("[PDC Network] Missing payload %s. Fetching from authorized peers in %s...\n", txID, f.vault.NodeJurisdiction)
-	
+
 	encryptedData, err := f.network.RequestPayload(ctx, txID, f.vault.NodeJurisdiction)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve side-channel payload from peers: %w", err)

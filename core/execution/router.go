@@ -3,16 +3,16 @@ package execution
 import (
 	"crypto/sha256"
 	"fmt"
-	"strings"
 	"sovereign-chain/modules/privacy"
+	"strings"
 )
 
 type SovereignExecutionRouter struct {
 	Vault        *privacy.JurisdictionVault
 	Fetcher      *privacy.SideChannelFetcher
 	Telemetry    *privacy.TelemetryPipeline
-	GlobalState  map[string][32]byte 
-	PrivateState map[string][]byte  
+	GlobalState  map[string][32]byte
+	PrivateState map[string][]byte
 }
 
 func NewSovereignExecutionRouter(vault *privacy.JurisdictionVault, fetcher *privacy.SideChannelFetcher, telemetry *privacy.TelemetryPipeline) *SovereignExecutionRouter {
@@ -34,7 +34,7 @@ func (r *SovereignExecutionRouter) Apply(anchor privacy.AnchoredTransaction) err
 	}
 
 	payloadData, err := r.Vault.RetrieveAndVerify(anchor.TxID, anchor.PayloadHash)
-	
+
 	if err != nil {
 		if strings.Contains(err.Error(), "PAYLOAD_MISSING") && r.Fetcher != nil {
 			fetchErr := r.Fetcher.FetchAndStore(anchor.TxID, anchor.PayloadHash)
@@ -52,7 +52,7 @@ func (r *SovereignExecutionRouter) Apply(anchor privacy.AnchoredTransaction) err
 
 	// 5. Apply the private data to the local isolated state
 	r.PrivateState[anchor.TxID] = payloadData
-	
+
 	// Capture post-state for ZK trace
 	postStateHash := sha256.Sum256(r.PrivateState[anchor.TxID])
 
