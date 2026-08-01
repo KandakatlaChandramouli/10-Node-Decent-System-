@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"strings"
 	"sovereign-chain/modules/privacy"
@@ -9,14 +10,16 @@ import (
 type SovereignExecutionRouter struct {
 	Vault        *privacy.JurisdictionVault
 	Fetcher      *privacy.SideChannelFetcher
-	GlobalState  map[string][32]byte // Merkle-authenticated public state
-	PrivateState map[string][]byte  // Jurisdiction-isolated local state
+	Telemetry    *privacy.TelemetryPipeline
+	GlobalState  map[string][32]byte 
+	PrivateState map[string][]byte  
 }
 
-func NewSovereignExecutionRouter(vault *privacy.JurisdictionVault, fetcher *privacy.SideChannelFetcher) *SovereignExecutionRouter {
+func NewSovereignExecutionRouter(vault *privacy.JurisdictionVault, fetcher *privacy.SideChannelFetcher, telemetry *privacy.TelemetryPipeline) *SovereignExecutionRouter {
 	return &SovereignExecutionRouter{
 		Vault:        vault,
 		Fetcher:      fetcher,
+		Telemetry:    telemetry,
 		GlobalState:  make(map[string][32]byte),
 		PrivateState: make(map[string][]byte),
 	}
@@ -24,35 +27,52 @@ func NewSovereignExecutionRouter(vault *privacy.JurisdictionVault, fetcher *priv
 
 // Apply is called sequentially by the Raft consensus engine
 func (r *SovereignExecutionRouter) Apply(anchor privacy.AnchoredTransaction) error {
-	// 1. ALL nodes globally record the proof-of-existence to maintain Raft continuity
 	r.GlobalState[anchor.TxID] = anchor.PayloadHash
 
-	// 2. Branch execution: Are we in the authorized jurisdiction?
 	if anchor.JurisdictionCode != r.Vault.NodeJurisdiction {
-		fmt.Printf("[Bypass] Execution skipped for foreign jurisdiction: %s\n", anchor.JurisdictionCode)
 		return nil
 	}
 
-	// 3. We are authorized. Fetch the payload from the side-channel vault.
 	payloadData, err := r.Vault.RetrieveAndVerify(anchor.TxID, anchor.PayloadHash)
 	
 	if err != nil {
-		// 4. Handle asynchronous race condition: Payload hasn't arrived via P2P yet
 		if strings.Contains(err.Error(), "PAYLOAD_MISSING") && r.Fetcher != nil {
 			fetchErr := r.Fetcher.FetchAndStore(anchor.TxID, anchor.PayloadHash)
 			if fetchErr != nil {
 				return fmt.Errorf("CRITICAL FAULT: execution stalled, payload unrecoverable: %v", fetchErr)
 			}
-			// Retry local read after successful network fetch
 			payloadData, _ = r.Vault.RetrieveAndVerify(anchor.TxID, anchor.PayloadHash)
 		} else {
 			return fmt.Errorf("execution stalled: %v", err)
 		}
 	}
 
+	// Capture pre-state for ZK trace
+	preStateHash := sha256.Sum256(r.PrivateState[anchor.TxID])
+
 	// 5. Apply the private data to the local isolated state
 	r.PrivateState[anchor.TxID] = payloadData
-	fmt.Printf("[Success] Executed isolated state transition for Tx: %s\n", anchor.TxID)
 	
+	// Capture post-state for ZK trace
+	postStateHash := sha256.Sum256(r.PrivateState[anchor.TxID])
+
+	// 6. Emit trace to the async ZK Telemetry Pipeline (Non-blocking)
+	if r.Telemetry != nil {
+		trace := privacy.ExecutionTrace{
+			TxID:             anchor.TxID,
+			JurisdictionCode: anchor.JurisdictionCode,
+			PreStateRoot:     preStateHash,
+			PostStateRoot:    postStateHash,
+			PayloadHash:      anchor.PayloadHash,
+		}
+		select {
+		case r.Telemetry.TraceQueue <- trace:
+			// Trace successfully buffered
+		default:
+			fmt.Printf("WARNING: ZK Telemetry queue saturated, dropping trace for %s\n", anchor.TxID)
+		}
+	}
+
+	fmt.Printf("[Success] Executed isolated state transition for Tx: %s\n", anchor.TxID)
 	return nil
 }
